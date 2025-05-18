@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8">
+  <title>Kalkulačka přepravy</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    input, select, button {
+      display: block;
+      margin-bottom: 10px;
+      width: 100%;
+      padding: 8px;
+      font-size: 16px;
+    }
+    #result {
+      font-weight: bold;
+      margin-top: 20px;
+      font-size: 18px;
+    }
+    .autocomplete-suggestions {
+      border: 1px solid #ccc;
+      background: #fff;
+      max-height: 150px;
+      overflow-y: auto;
+      position: absolute;
+      z-index: 9999;
+      width: 100%;
+    }
+    .autocomplete-suggestion {
+      padding: 8px;
+      cursor: pointer;
+    }
+    .autocomplete-suggestion:hover {
+      background-color: #eee;
+    }
+  </style>
+</head>
+<body>
+  <h1>Kalkulačka přepravy</h1>
+
+  <label>Odkud:</label>
+  <input id="from" placeholder="Zadejte výchozí adresu">
+  <div id="from-suggestions" class="autocomplete-suggestions"></div>
+
+  <label>Kam:</label>
+  <input id="to" placeholder="Zadejte cílovou adresu">
+  <div id="to-suggestions" class="autocomplete-suggestions"></div>
+
+  <label>LDM (ložné metry):</label>
+  <input id="ldm" type="number" step="0.01" min="0">
+
+  <label>Hmotnost (kg):</label>
+  <input id="weight" type="number" step="1" min="0">
+
+  <label><input type="checkbox" id="express"> Expresní přeprava (+30%)</label>
+  <label><input type="checkbox" id="adr"> ADR přeprava (+15%)</label>
+
+  <button onclick="calculatePrice()">Spočítat cenu</button>
+
+  <div id="result"></div>
+
+  <script>
+    const orsApiKey = "5b3ce3597851110001cf6248f2a8e2a0a01043f788978180c2614a34";
+
+    let fromCoords = null;
+    let toCoords = null;
+
+    function geocode(inputId, callback) {
+      const input = document.getElementById(inputId);
+      const url = `https://api.openrouteservice.org/geocode/search?api_key=${orsApiKey}&text=${encodeURIComponent(input.value)}&boundary.country=CZ&lang=cs`;
+      fetch(url)
+        .then(res => res.json())
+        .then(data => {
+          if (data.features && data.features.length > 0) {
+            const coords = data.features[0].geometry.coordinates;
+            callback(coords);
+          } else {
+            alert("Adresa nenalezena: " + input.value);
+          }
+        });
+    }
+
+    function calculatePrice() {
+      geocode("from", coords => {
+        fromCoords = coords;
+        geocode("to", coords2 => {
+          toCoords = coords2;
+          getDistance();
+        });
+      });
+    }
+
+    function getDistance() {
+      const body = {
+        coordinates: [fromCoords, toCoords],
+        units: "km"
+      };
+
+      fetch("https://api.openrouteservice.org/v2/directions/driving-car", {
+        method: "POST",
+        headers: {
+          "Authorization": orsApiKey,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+      })
+        .then(res => res.json())
+        .then(data => {
+          const distance = data.routes[0].summary.distance;
+          const ldm = parseFloat(document.getElementById("ldm").value) || 0;
+          const weight = parseFloat(document.getElementById("weight").value) || 0;
+          const express = document.getElementById("express").checked;
+          const adr = document.getElementById("adr").checked;
+
+          let basePrice = distance * 9;
+
+          if (ldm > 0.4 || weight > 180) {
+            const ldmUnits = Math.ceil(ldm / 0.4);
+            const weightUnits = Math.ceil(weight / 180);
+            const units = Math.max(ldmUnits, weightUnits);
+            const extra = (units - 1) * 1200;
+            basePrice += extra;
+          }
+
+          if (express) basePrice *= 1.3;
+          if (adr) basePrice *= 1.15;
+
+          if (basePrice < 2000) basePrice = 2000;
+
+          document.getElementById("result").innerText = `Odhadovaná cena přepravy: ${Math.round(basePrice)} Kč`;
+        })
+        .catch(() => alert("Nepodařilo se získat vzdálenost"));
+    }
+
+    function setupAutocomplete(inputId, suggestionsId) {
+      const input = document.getElementById(inputId);
+      const suggestions = document.getElementById(suggestionsId);
+
+      input.addEventListener("input", () => {
+        const query = input.value;
+        if (query.length < 3) {
+          suggestions.innerHTML = "";
+          return;
+        }
+        fetch(`https://api.openrouteservice.org/geocode/autocomplete?api_key=${orsApiKey}&text=${encodeURIComponent(query)}&boundary.country=CZ&lang=cs`)
+          .then(res => res.json())
+          .then(data => {
+            suggestions.innerHTML = "";
+            data.features.forEach(feature => {
+              const div = document.createElement("div");
+              div.className = "autocomplete-suggestion";
+              div.textContent = feature.properties.label;
+              div.addEventListener("click", () => {
+                input.value = feature.properties.label;
+                suggestions.innerHTML = "";
+              });
+              suggestions.appendChild(div);
+            });
+          });
+      });
+    }
+
+    setupAutocomplete("from", "from-suggestions");
+    setupAutocomplete("to", "to-suggestions");
+  </script>
+</body>
+</html>
